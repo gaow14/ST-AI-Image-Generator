@@ -329,6 +329,102 @@ $('#ai_image_gen_clear_cache').on('click', function() {
 });
 }
 
+// 清除图片缓存
+function clearImageCache() {
+imagesCache = {};
+localStorage.removeItem('ai_image_gen_cache');
+console.log('图片缓存已清除');
+}
+
+// 检查图片缓存
+function checkImageCache(prompt) {
+// 如果禁用缓存，返回null
+if (settings.cache === '0') return null;
+
+// 从localStorage加载缓存
+try {
+    const cachedData = localStorage.getItem('ai_image_gen_cache');
+    if (cachedData) {
+        const cache = JSON.parse(cachedData);
+        if (cache[prompt]) {
+            const cacheTime = cache[prompt].timestamp;
+            const now = Date.now();
+            const cacheDays = parseInt(settings.cache);
+            const dayInMs = 24 * 60 * 60 * 1000;
+
+            if (now - cacheTime < cacheDays * dayInMs) {
+                console.log('使用缓存的图片');
+                return cache[prompt].url;
+            }
+        }
+    }
+} catch (error) {
+    console.error('读取缓存失败:', error);
+}
+
+return null;
+}
+
+// 保存图片到缓存
+function saveImageToCache(prompt, imageUrl) {
+if (settings.cache === '0') return;
+
+try {
+    let cache = {};
+    const cachedData = localStorage.getItem('ai_image_gen_cache');
+    if (cachedData) {
+        cache = JSON.parse(cachedData);
+    }
+
+    cache[prompt] = {
+        url: imageUrl,
+        timestamp: Date.now()
+    };
+
+    localStorage.setItem('ai_image_gen_cache', JSON.stringify(cache));
+    console.log('图片已保存到缓存');
+} catch (error) {
+    console.error('保存缓存失败:', error);
+}
+}
+
+// 处理正面提示词组合
+async function combinePositivePrompt(customPrompt, fixedPrompt, AQT) {
+let result = '';
+
+if (fixedPrompt && fixedPrompt.trim() !== '') {
+    result += fixedPrompt.trim();
+}
+
+if (customPrompt && customPrompt.trim() !== '') {
+    if (result !== '') result += ', ';
+    result += customPrompt.trim();
+}
+
+if (AQT && AQT.trim() !== '') {
+    if (result !== '') result += ', ';
+    result += AQT.trim();
+}
+
+return result;
+}
+
+// 处理负面提示词组合
+async function combineNegativePrompt(negativePrompt, UCP) {
+let result = '';
+
+if (negativePrompt && negativePrompt.trim() !== '') {
+    result += negativePrompt.trim();
+}
+
+if (UCP && UCP.trim() !== '') {
+    if (result !== '') result += ', ';
+    result += UCP.trim();
+}
+
+return result;
+}
+
 // 扫描消息寻找图像生成标记
 function scanMessages() {
 if (!settings.enabled) return;
@@ -386,7 +482,7 @@ messages.forEach(message => {
                 if (settings.zidongdianji === 'true') {
                     const lastMessage = Array.from(messages).pop();
                     if (message === lastMessage) {
-                        button.click();
+                        setTimeout(() => button.click(), 500); // 稍微延迟一下自动点击
                     }
                 }
             }
@@ -419,4 +515,601 @@ try {
             imageUrl = await generateWithSD(prompt);
             break;
         case 'novelai':
-            imageUrl = await
+            imageUrl = await generateWithNovelAI(prompt);
+            break;
+        case 'comfyui':
+            imageUrl = await generateWithComfyUI(prompt);
+            break;
+        case 'free':
+            imageUrl = await generateWithFreeAPI(prompt);
+            break;
+    }
+
+    if (imageUrl) {
+        // 保存到缓存
+        saveImageToCache(prompt, imageUrl);
+        // 显示生成的图像
+        displayGeneratedImage(button, spanId, imageUrl);
+    } else {
+        button.textContent = '生成失败';
+        button.disabled = false;
+    }
+} catch (error) {
+    console.error('图像生成失败:', error);
+    button.textContent = '生成失败';
+    button.disabled = false;
+}
+}
+    // 显示生成的图像
+    function displayGeneratedImage(button, spanId, imageUrl) {
+        const span = document.getElementById(spanId);
+
+        // 创建图像元素
+        const img = document.createElement('img');
+        img.src = imageUrl;
+        img.alt = '生成的图像';
+        img.style.maxWidth = '100%';
+
+        // 清空span内容并添加图像
+        span.innerHTML = '';
+        span.appendChild(img);
+
+        // 如果设置了双击触发，隐藏按钮
+        if (settings.dbclike === 'true') {
+            button.style.display = 'none';
+
+            // 为图片添加双击事件
+            img.addEventListener('dblclick', function() {
+                // 添加震动效果提示
+                addSmoothShakeEffect(img);
+                // 重新生成图片
+                handleImageGeneration(button, button.dataset.prompt, spanId);
+            });
+        } else {
+            button.textContent = '重新生成';
+            button.disabled = false;
+        }
+    }
+
+    // 为图片添加平滑震动效果
+    function addSmoothShakeEffect(imgElement) {
+        // 确保图片有定位属性
+        const currentPosition = window.getComputedStyle(imgElement).position;
+        if (currentPosition === 'static') {
+            imgElement.style.position = 'relative';
+        }
+
+        const startTime = Date.now();
+        const duration = 300; // 持续时间（毫秒）
+        const amplitude = 3; // 震动幅度
+
+        function shake() {
+            const elapsed = Date.now() - startTime;
+
+            if (elapsed < duration) {
+                // 使用正弦函数创建震动效果
+                const offset = amplitude * Math.sin(elapsed / duration * Math.PI * 10);
+                imgElement.style.left = `${offset}px`;
+
+                requestAnimationFrame(shake);
+            } else {
+                // 重置位置
+                imgElement.style.left = '0px';
+            }
+        }
+
+        requestAnimationFrame(shake);
+    }
+
+    // 免费API图像生成
+    async function generateWithFreeAPI(prompt) {
+        console.log('使用免费API生成图像:', prompt);
+
+        try {
+            const width = settings.width;
+            const height = settings.height;
+            const seed = settings.seed === '0' ? generateRandomSeed() : Number(settings.seed);
+
+            // 组合提示词
+            const fullPrompt = await combinePositivePrompt(prompt, settings.fixedPrompt, settings.AQT);
+
+            // 构建Pollinations.ai URL
+            const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(fullPrompt)}?width=${width}&height=${height}&seed=${seed}&model=${settings.freeMode}`;
+
+            console.log('生成图像URL:', url);
+            return url;
+        } catch (error) {
+            console.error('免费API生成失败:', error);
+            return null;
+        }
+    }
+
+    // Stable Diffusion图像生成
+    async function generateWithSD(prompt) {
+        console.log('使用SD生成图像:', prompt);
+
+        if (xiancheng === false) {
+            console.log('SD生成器繁忙，请稍后再试');
+            return null;
+        }
+
+        try {
+            xiancheng = false;
+
+            // 组合提示词
+            const fullPrompt = await combinePositivePrompt(prompt, settings.fixedPrompt, settings.AQT);
+            const negPrompt = await combineNegativePrompt(settings.negativePrompt, settings.UCP);
+
+            // 确保URL格式正确
+            const sdUrl = settings.sdUrl.endsWith('/') ? settings.sdUrl.slice(0, -1) : settings.sdUrl;
+
+            // 构建请求参数
+            const payload = {
+                prompt: fullPrompt,
+                negative_prompt: negPrompt,
+                steps: Number(settings.steps),
+                sampler_name: settings.samplerName,
+                width: Number(settings.width),
+                height: Number(settings.height),
+                restore_faces: settings.restoreFaces === 'true',
+                cfg_scale: Number(settings.sdCfgScale),
+                seed: settings.seed === '0' ? -1 : Number(settings.seed)
+            };
+
+            console.log('SD请求参数:', payload);
+
+            // 发送请求到SD API
+            const response = await fetch(`${sdUrl}/sdapi/v1/txt2img`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                throw new Error(`SD API返回错误: ${response.status} ${response.statusText}`);
+            }
+
+            const data = await response.json();
+            xiancheng = true;
+
+            // 返回第一张图片
+            if (data.images && data.images.length > 0) {
+                return 'data:image/png;base64,' + data.images[0];
+            } else {
+                throw new Error('SD API没有返回图片');
+            }
+        } catch (error) {
+            console.error('SD生成失败:', error);
+            xiancheng = true;
+            return null;
+        }
+    }
+
+    // NovelAI图像生成
+    async function generateWithNovelAI(prompt) {
+        console.log('使用NovelAI生成图像:', prompt);
+
+        if (xiancheng === false) {
+            console.log('NovelAI生成器繁忙，请稍后再试');
+            return null;
+        }
+
+        if (!settings.novelaiApi || settings.novelaiApi.trim() === '') {
+            console.error('NovelAI API密钥未设置');
+            return null;
+        }
+
+        try {
+            xiancheng = false;
+
+            // 组合提示词
+            const fullPrompt = await combinePositivePrompt(prompt, settings.fixedPrompt, settings.AQT);
+            const negPrompt = await combineNegativePrompt(settings.negativePrompt, settings.UCP);
+
+            // 构建NovelAI参数
+            const seed = settings.seed === '0' ? generateRandomSeed() : Number(settings.seed);
+
+            const params = {
+                params_version: 3,
+                width: Number(settings.width),
+                height: Number(settings.height),
+                scale: Number(settings.nai3Scale),
+                sampler: settings.sampler,
+                steps: Number(settings.steps),
+                n_samples: 1,
+                ucPreset: 3,
+                qualityToggle: true,
+                sm: settings.sm === 'true',
+                sm_dyn: settings.dyn === 'true' && settings.sm === 'true',
+                dynamic_thresholding: settings.nai3Deceisp === 'true',
+                controlnet_strength: 1,
+                legacy: false,
+                add_original_image: false,
+                cfg_rescale: Number(settings.cfg_rescale),
+                noise_schedule: settings.Schedule,
+                skip_cfg_above_sigma: settings.nai3Variety === 'true' ? 19.343056794463642 : null,
+                legacy_v3_extend: false,
+                seed: seed,
+                negative_prompt: negPrompt,
+                reference_image_multiple: [],
+                reference_information_extracted_multiple: [],
+                reference_strength_multiple: []
+            };
+
+            // 添加参考图片（如果有）
+            if (nai3cankaotupian && settings.nai3VibeTransfer === 'true') {
+                params.reference_image_multiple.push(nai3cankaotupian.split(',')[1]);
+                params.reference_information_extracted_multiple.push(Number(settings.InformationExtracted));
+                params.reference_strength_multiple.push(Number(settings.ReferenceStrength));
+            }
+
+            // 根据选择的模型添加特殊参数
+            if (settings.novelaimode === 'nai-diffusion-4-curated-preview' || settings.novelaimode === 'nai-diffusion-4-full') {
+                // NAI V4需要特殊的参数
+                params.v4_prompt = {
+                    caption: {
+                        base_caption: fullPrompt,
+                        char_captions: []
+                    },
+                    use_coords: false,
+                    use_order: true
+                };
+
+                params.v4_negative_prompt = {
+                    caption: {
+                        base_caption: negPrompt,
+                        char_captions: []
+                    }
+                };
+            }
+
+            // 发送请求到NovelAI API
+            const response = await fetch('https://image.novelai.net/ai/generate-image', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${settings.novelaiApi}`
+                },
+                body: JSON.stringify({
+                    input: fullPrompt,
+                    model: settings.novelaimode,
+                    action: 'generate',
+                    parameters: params
+                })
+            });
+
+            if (!response.ok) {
+                let errorMessage = `NovelAI API返回错误: ${response.status}`;
+                if (response.status === 401) {
+                    errorMessage = 'NovelAI API密钥无效';
+                } else if (response.status === 402) {
+                    errorMessage = 'NovelAI账户余额不足';
+                }
+                throw new Error(errorMessage);
+            }
+
+            // NovelAI返回的是ZIP文件，包含图片
+            const zipData = await response.arrayBuffer();
+            const unzippedData = await unzipNovelAIResponse(zipData);
+
+            xiancheng = true;
+            return unzippedData;
+        } catch (error) {
+            console.error('NovelAI生成失败:', error);
+            xiancheng = true;
+            return null;
+        }
+    }
+
+    // 解压NovelAI响应
+    async function unzipNovelAIResponse(zipData) {
+        return new Promise((resolve, reject) => {
+            try {
+                // 加载ZIP数据
+                JSZip.loadAsync(zipData)
+                    .then(function(zip) {
+                        // 遍历ZIP文件
+                        zip.forEach(function(relativePath, zipEntry) {
+                            // 获取第一个文件（应该是PNG图片）
+                            zipEntry.async('base64').then(function(base64Data) {
+                                resolve('data:image/png;base64,' + base64Data);
+                            });
+                        });
+                    })
+                    .catch(reject);
+            } catch (error) {
+                reject(error);
+            }
+        });
+    }
+
+    // ComfyUI图像生成
+    async function generateWithComfyUI(prompt) {
+        console.log('使用ComfyUI生成图像:', prompt);
+
+        if (xiancheng === false) {
+            console.log('ComfyUI生成器繁忙，请稍后再试');
+            return null;
+        }
+
+        try {
+            xiancheng = false;
+
+            // 处理提示词
+            prompt = prompt.replaceAll("《","<").replaceAll("》",">").replaceAll("\n",",");
+
+            // 组合提示词
+            const fullPrompt = await combinePositivePrompt(prompt, settings.fixedPrompt, settings.AQT);
+            const negPrompt = await combineNegativePrompt(settings.negativePrompt, settings.UCP);
+
+            // 替换LORA标签格式
+            const replaceLoraTags = (input) => {
+                const regex = /<lora:([^:]+)(?:\.safetensors)?:([^>]+)(?::1)?>/g;
+                return input.replace(regex, (match, filename, value) => {
+                    if (match.includes('.safetensors')) {
+                        return match;
+                    }
+                    return `<lora:${filename}.safetensors:${value}:1>`;
+                });
+            };
+
+            let processedPrompt = replaceLoraTags(fullPrompt);
+            let processedNegPrompt = replaceLoraTags(negPrompt);
+
+            // 处理字符串以适应ComfyUI格式
+            processedPrompt = processedPrompt.replaceAll("\n",",").replaceAll("\\\\","\\").replaceAll("\\","\\\\");
+            processedNegPrompt = processedNegPrompt.replaceAll("\n",",").replaceAll("\\\\","\\").replaceAll("\\","\\\\");
+
+            // 确保URL格式正确
+            const comfyUrl = settings.sdUrl.endsWith('/') ? settings.sdUrl.slice(0, -1) : settings.sdUrl;
+            // 使用8188端口而不是7860
+            const apiUrl = comfyUrl.replace('7860', '8188');
+
+            // 生成客户端ID
+            const clientId = `ai_img_gen_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+            // 获取工作流模板
+            let workflow = await getComfyUIWorkflow();
+
+            // 替换模板中的变量
+            const seed = settings.seed === '0' ? generateRandomSeed() : Number(settings.seed);
+            workflow = workflow
+                .replace("%seed%", seed)
+                .replace("%steps%", Number(settings.steps))
+                .replace("%cfg_scale%", Number(settings.sdCfgScale))
+                .replace("%sampler_name%", `"${settings.comfyuisamplerName}"`)
+                .replace("%width%", Number(settings.width))
+                .replace("%height%", Number(settings.height))
+                .replace("%negative_prompt%", `"${processedNegPrompt}"`)
+                .replace("%prompt%", `"${processedPrompt}"`)
+                .replace("%MODEL_NAME%", `"${settings.MODEL_NAME.trim()}.safetensors"`)
+                .replace("%c_quanzhong%", Number(settings.c_quanzhong))
+                .replace("%c_idquanzhong%", Number(settings.c_idquanzhong))
+                .replace("%c_xijie%", Number(settings.c_xijie))
+                .replace("%c_fenwei%", Number(settings.c_fenwei));
+
+            if (comfyuicankaotupian) {
+                workflow = workflow.replace("%comfyuicankaotupian%", `"${comfyuicankaotupian}"`);
+            }
+
+            workflow = workflow.replace("%ipa%", `"${settings.ipa}"`);
+
+            // 构建ComfyUI请求
+            const comfyPayload = {
+                client_id: clientId,
+                prompt: JSON.parse(workflow)
+            };
+
+            // 发送请求到ComfyUI
+            const response = await fetch(`${apiUrl}/prompt`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(comfyPayload)
+            });
+
+            if (!response.ok) {
+                throw new Error(`ComfyUI API返回错误: ${response.status} ${response.statusText}`);
+            }
+
+            const data = await response.json();
+            const promptId = data.prompt_id;
+
+            // 等待图像生成完成
+            let imageUrl = null;
+            let retryCount = 0;
+
+            while (retryCount < 60) { // 最多等待60秒
+                await sleep(1000);
+                retryCount++;
+
+                // 检查生成状态
+                const historyResponse = await fetch(`${apiUrl}/history/${promptId}`);
+                if (!historyResponse.ok) continue;
+
+                const historyData = await historyResponse.json();
+
+                if (historyData[promptId]) {
+                    // 查找输出图像
+                    const outputs = historyData[promptId].outputs;
+                    if (!outputs) continue;
+
+                    // 查找第一个有图像的输出
+                    const outputKeys = Object.keys(outputs);
+                    for (const key of outputKeys) {
+                        const output = outputs[key];
+                        if (output.images && output.images.length > 0) {
+                            const filename = output.images[0].filename;
+                            imageUrl = `${apiUrl}/view?filename=${filename}&type=output`;
+                            break;
+                        }
+                    }
+
+                    if (imageUrl) break;
+                }
+            }
+
+            if (!imageUrl) {
+                throw new Error('ComfyUI生成超时');
+            }
+
+            // 获取图像
+            const imageResponse = await fetch(imageUrl);
+            if (!imageResponse.ok) {
+                throw new Error(`获取ComfyUI图像失败: ${imageResponse.status}`);
+            }
+
+            const imageBlob = await imageResponse.blob();
+            const dataUrl = await blobToDataURL(imageBlob);
+
+            xiancheng = true;
+            return dataUrl;
+        } catch (error) {
+            console.error('ComfyUI生成失败:', error);
+            xiancheng = true;
+            return null;
+        }
+    }
+
+    // 获取ComfyUI工作流
+    async function getComfyUIWorkflow() {
+        // 这里可以扩展为从设置中获取不同的工作流模板
+        // 为简化，这里返回一个基本的工作流
+        return `{
+            "3": {
+                "inputs": {
+                    "seed": "%seed%",
+                    "steps": "%steps%",
+                    "cfg": "%cfg_scale%",
+                    "sampler_name": "%sampler_name%",
+                    "scheduler": "karras",
+                    "denoise": 1,
+                    "model": [
+                        "4",
+                        0
+                    ],
+                    "positive": [
+                        "5",
+                        0
+                    ],
+                    "negative": [
+                        "6",
+                        0
+                    ],
+                    "latent_image": [
+                        "7",
+                        0
+                    ]
+                },
+                "class_type": "KSampler",
+                "_meta": {
+                    "title": "KSampler"
+                }
+            },
+            "4": {
+                "inputs": {
+                    "ckpt_name": "%MODEL_NAME%"
+                },
+                "class_type": "CheckpointLoaderSimple",
+                "_meta": {
+                    "title": "Checkpoint Loader"
+                }
+            },
+            "5": {
+                "inputs": {
+                    "text": "%prompt%",
+                    "clip": [
+                        "4",
+                        1
+                    ]
+                },
+                "class_type": "CLIPTextEncode",
+                "_meta": {
+                    "title": "CLIP Text Encode (Positive)"
+                }
+            },
+            "6": {
+                "inputs": {
+                    "text": "%negative_prompt%",
+                    "clip": [
+                        "4",
+                        1
+                    ]
+                },
+                "class_type": "CLIPTextEncode",
+                "_meta": {
+                    "title": "CLIP Text Encode (Negative)"
+                }
+            },
+            "7": {
+                "inputs": {
+                    "width": "%width%",
+                    "height": "%height%",
+                    "batch_size": 1
+                },
+                "class_type": "EmptyLatentImage",
+                "_meta": {
+                    "title": "Empty Latent Image"
+                }
+            },
+            "8": {
+                "inputs": {
+                    "samples": [
+                        "3",
+                        0
+                    ],
+                    "vae": [
+                        "4",
+                        2
+                    ]
+                },
+                "class_type": "VAEDecode",
+                "_meta": {
+                    "title": "VAE Decode"
+                }
+            },
+            "9": {
+                "inputs": {
+                    "filename_prefix": "ComfyUI",
+                    "images": [
+                        "8",
+                        0
+                    ]
+                },
+                "class_type": "SaveImage",
+                "_meta": {
+                    "title": "Save Image"
+                }
+            }
+        }`;
+    }
+
+    // Blob转DataURL
+    function blobToDataURL(blob) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                resolve(e.target.result);
+            };
+            reader.onerror = function(e) {
+                reject(e);
+            };
+            reader.readAsDataURL(blob);
+        });
+    }
+
+    // JSZip 可能需要在HTML中单独引入
+    // 如果没有在全局作用域中找到JSZip，可以尝试使用以下代替方法
+    function getJSZip() {
+        if (typeof JSZip !== 'undefined') {
+            return JSZip;
+        }
+
+        // 这里可以添加动态加载JSZip的代码
+        // 或者在插件安装时确保JSZip已经加载
+        throw new Error('JSZip未找到，可能需要在插件设置中单独引入');
+    }
+}
