@@ -1,0 +1,12 @@
+{
+    "name": "AI图像生成",
+    "version": "1.0.0",
+    "description": "使用SD、NovelAI或ComfyUI为聊天生成插图",
+    "author": "从前跟你一样 (转换版)",
+    "load_after": ["settings"],
+    "icon": "img/tabler-icons/photo.svg",
+    "optional": true,
+    "requires": [],
+    "settings": true,
+    "tags": ["图像", "SD", "NovelAI", "ComfyUI"]
+}
